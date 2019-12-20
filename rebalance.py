@@ -55,9 +55,9 @@ def rebalance(amount, assets=ASSETS):
     if amount < 0:
         all_f = list(reversed(all_f))
 
-    h = 0 # accumulator of some kind?
-    k = 0 # some factor thing
-    e = 0 # keeps track of when we ran out of money
+    h = 0 # accumulator for targetValues
+    k = 0 # the error we can remove
+    e = 0 # keeps track of index when we ran out of money
     for i, (a, f) in enumerate(all_f):
         if not abs(amount) > 0:
             break
@@ -71,6 +71,10 @@ def rebalance(amount, assets=ASSETS):
         else:
             l = all_f[i+1][1]
 
+        # On the first iteration, it calculates how much we need for the worst thing
+        # to equal the error of the next-to-worst thing.
+        # But on the *second* loop...it calculates how much *more* is needed
+        # for *both* to catch up with the next one
         t = h * (l - k)
 
         # need to use abs() to handle withdrawal cases (i.e. negative amounts)
@@ -78,6 +82,11 @@ def rebalance(amount, assets=ASSETS):
             amount -= t
             k = l
         else:
+            # we don't have enough *amount* to completely catch up with
+            # the next level. The *amount* we have is what is left after
+            # the *previous* level caught up to us. The ratio *amount/h*
+            # is how much error we can reduce given our funds available.
+            #print(f"k={k}, amount={amount}, h={h}, a={amount/h}")
             k = k + (amount/h)
             amount = 0
         e += 1
@@ -94,5 +103,8 @@ def rebalance(amount, assets=ASSETS):
     return actions
 
 if __name__ == '__main__':
-    import doctest
-    doctest.testmod()
+    #import doctest
+    #doctest.testmod()
+
+    actions = rebalance(5_000)
+    pprint(actions)
