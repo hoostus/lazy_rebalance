@@ -36,6 +36,12 @@ def rebalance(amount, assets=ASSETS):
 
     >>> rebalance(5_000)
     [('TIPS fund', 2833.333333333333), ('Bond fund', 2166.666666666667)]
+    >>> rebalance(30_000)
+    [('TIPS fund', 6500.0), ('Bond fund', 9500.0), ('Domestic stock fund', 8499.999999999996), ('International stock fund', 5500.000000000001)]
+    >>> rebalance(-12_000)
+    [('International stock fund', -5642.857142857143), ('Domestic stock fund', -6357.142857142856)]
+    >>> rebalance(-35_000)
+    [('International stock fund', -13999.999999999998), ('Domestic stock fund', -17500.0), ('Bond fund', -3499.999999999999)]
     """
 
     def fracdev(a, t):
@@ -46,11 +52,14 @@ def rebalance(amount, assets=ASSETS):
     all_f = [(a, fracdev(a.value, a.target*total)) for a in assets]
     all_f = sorted(all_f, key=lambda x: x[1])
 
+    if amount < 0:
+        all_f = list(reversed(all_f))
+
     h = 0 # accumulator of some kind?
     k = 0 # some factor thing
     e = 0 # keeps track of when we ran out of money
     for i, (a, f) in enumerate(all_f):
-        if amount <= 0:
+        if not abs(amount) > 0:
             break
 
         k = f
@@ -64,7 +73,8 @@ def rebalance(amount, assets=ASSETS):
 
         t = h * (l - k)
 
-        if t <= amount:
+        # need to use abs() to handle withdrawal cases (i.e. negative amounts)
+        if abs(t) <= abs(amount):
             amount -= t
             k = l
         else:
