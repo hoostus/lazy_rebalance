@@ -22,89 +22,110 @@ import operator
 from functools import reduce
 from pprint import pprint
 
-Asset = namedtuple('Asset', ['name', 'target', 'value'])
+__test_assets__ = [('Bond fund', 0.20, 16_500),
+    ('TIPS fund', 0.10, 6_500),
+    ('Domestic stock fund', 0.40, 43_500),
+    ('International stock fund', 0.30, 33_500)]
 
-ASSETS = [
-    Asset('Bond fund', 0.20, 16_500),
-    Asset('TIPS fund', 0.10, 6_500),
-    Asset('Domestic stock fund', 0.40, 43_500),
-    Asset('International stock fund', 0.30, 33_500),
-]
+def fracdev(a, t):
+    return (a/t) - 1
 
-def rebalance(amount, assets=ASSETS):
+Asset = namedtuple('Asset', ['name', 'targetValue', 'value', 'deviation'])
+
+def make_tuple(totalValue, assets):
+    """ Given an list of (name, percentage, value) create the named tuples """
+    def mk(name, pct, value):
+        targetValue = totalValue * pct
+        dev = fracdev(value, targetValue)
+        return Asset(name, targetValue, value, dev)
+
+    return [mk(*a) for a in assets]
+
+def get_next_deviation(assets):
+    # If there are no other assets in the list then the 'next level' is
+    # "no deviations at all", so return 0
+    if not assets:
+        return 0
+    else:
+        return assets[0].deviation
+
+def calc_assets(amount, rest, assets):
+    a = rest.pop(0)
+    # the distance to the next deviation level
+    catch_up = get_next_deviation(rest) - a.deviation
+    # we need to calculate how much it would cost to reach the next deviation
+    # level not just for ourselves, but also for everyone else before us,
+    # who are also now at our deviation level.
+    sum_targetValues = reduce(operator.add, [n.targetValue for n in assets], a.targetValue)
+    delta = catch_up * sum_targetValues
+    # We need the absolute value because we don't know whether we are adding or
+    # or removing money to the portfolio; the abs() handles both cases
+    if abs(delta) < abs(amount):
+        return calc_assets(amount - delta, rest, assets + [a])
+    else:
+        # When we don't have enough money to *fully* equalize the current asset
+        # deviation so the next asset deviation we terminate the loop.
+        return assets + [a]
+
+# This is unfortunately similar to above loop construct. Except this time
+# We want to calculate, given the amount of money we have, how much we can
+# correct the deviation of the *last* set of assets.
+def calc_deviation_for_money(amount, rest, sum_targetValues):
+    a = rest.pop(0)
+    sum_targetValues += a.targetValue
+    catch_up = get_next_deviation(rest) - a.deviation
+    delta = catch_up * sum_targetValues
+    if abs(delta) < abs(amount):
+        return calc_deviation_for_money(amount - delta, rest, sum_targetValues)
+    else:
+        # given the amount of money we have left after catching everyone below
+        # us up to *us*, how far can we move our *own* deviation? Keeping in
+        # mind that we need to bring along with us, everyone who is now equal
+        # to us. That's why we have the sum_targetValues here.
+        return amount / sum_targetValues
+
+def rebalance(amount, assets):
     """
-
-    >>> rebalance(5_000)
+    >>> rebalance(5_000, __test_assets__)
     [('TIPS fund', 2833.333333333333), ('Bond fund', 2166.666666666667)]
-    >>> rebalance(30_000)
+    >>> rebalance(30_000, __test_assets__)
     [('TIPS fund', 6500.0), ('Bond fund', 9500.0), ('Domestic stock fund', 8499.999999999996), ('International stock fund', 5500.000000000001)]
-    >>> rebalance(-12_000)
+    >>> rebalance(-12_000, __test_assets__)
     [('International stock fund', -5642.857142857143), ('Domestic stock fund', -6357.142857142856)]
-    >>> rebalance(-35_000)
+    >>> rebalance(-35_000, __test_assets__)
     [('International stock fund', -13999.999999999998), ('Domestic stock fund', -17500.0), ('Bond fund', -3499.999999999999)]
     """
 
-    def fracdev(a, t):
-        return (a/t) - 1
+    def get_value(n):
+        return n[2]
 
-    total = amount + reduce(operator.add, [a.value for a in assets])
+    total = reduce(operator.add, [get_value(a) for a in assets], amount)
 
-    all_f = [(a, fracdev(a.value, a.target*total)) for a in assets]
-    all_f = sorted(all_f, key=lambda x: x[1])
+    # This will also calculate the error ('deviation') from the targetValue for each
+    all_assets = make_tuple(total, assets)
 
+    # Sort them in the order we want to reduce the errors.
+    # A positive *amount* means we want to reduce the most underweight things
+    # first (by adding to them)
+    all_assets = list(sorted(all_assets, key=lambda x: x.deviation))
+
+    # A negative *amount* means we want to reduce the most overweight things
+    # first (by removing from them)
     if amount < 0:
-        all_f = list(reversed(all_f))
+        all_assets = list(reversed(all_assets))
 
-    h = 0 # accumulator for targetValues
-    k = 0 # the error we can remove
-    e = 0 # keeps track of index when we ran out of money
-    for i, (a, f) in enumerate(all_f):
-        if not abs(amount) > 0:
-            break
+    # Next we generate a list of all the assets we have enough money to reduce
+    # deviation for.
+    affected_assets = calc_assets(amount, all_assets.copy(), [])
 
-        k = f
-        targetValue = total * a.target
-        h += targetValue
+    # Calculate the final target deviation we want all of the above assets to reach
+    # given the amount of money we have on hand.
+    target_deviation = affected_assets[-1].deviation
+    target_deviation += calc_deviation_for_money(amount, affected_assets.copy(), 0)
 
-        if i >= len(all_f) - 1:
-            l = 0
-        else:
-            l = all_f[i+1][1]
-
-        # On the first iteration, it calculates how much we need for the worst thing
-        # to equal the error of the next-to-worst thing.
-        # But on the *second* loop...it calculates how much *more* is needed
-        # for *both* to catch up with the next one
-        t = h * (l - k)
-
-        # need to use abs() to handle withdrawal cases (i.e. negative amounts)
-        if abs(t) <= abs(amount):
-            amount -= t
-            k = l
-        else:
-            # we don't have enough *amount* to completely catch up with
-            # the next level. The *amount* we have is what is left after
-            # the *previous* level caught up to us. The ratio *amount/h*
-            # is how much error we can reduce given our funds available.
-            #print(f"k={k}, amount={amount}, h={h}, a={amount/h}")
-            k = k + (amount/h)
-            amount = 0
-        e += 1
-
-    actions = []
-
-    for i, (a, f) in enumerate(all_f):
-        if i >= e:
-            break
-        targetValue = total * a.target
-        delta = targetValue * (k - f)
-        actions.append((a.name, delta))
-
-    return actions
+    # Given that target deviation, calculate the actual dollar amounts we need to move
+    return [(a.name, a.targetValue * (target_deviation - a.deviation)) for a in affected_assets]
 
 if __name__ == '__main__':
-    #import doctest
-    #doctest.testmod()
-
-    actions = rebalance(5_000)
-    pprint(actions)
+    import doctest
+    doctest.testmod()
